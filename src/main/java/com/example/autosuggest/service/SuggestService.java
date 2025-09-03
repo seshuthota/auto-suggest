@@ -3,6 +3,10 @@ package com.example.autosuggest.service;
 import com.example.autosuggest.model.Suggestion;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -27,19 +31,26 @@ public class SuggestService {
     private final Cache<String, List<Suggestion>> cache;
     private final boolean cacheEnabled;
     private final boolean defaultsEnabled;
+    private final MeterRegistry meter;
 
     public SuggestService(NamedParameterJdbcTemplate jdbc,
                           @Value("${suggest.engine:sqlite-like}") String engine,
                           @Value("${suggest.cache.enabled:true}") boolean cacheEnabled,
-                          @Value("${suggest.defaults.enabled:false}") boolean defaultsEnabled) {
+                          @Value("${suggest.defaults.enabled:false}") boolean defaultsEnabled,
+                          MeterRegistry meterRegistry) {
         this.jdbc = jdbc;
         this.engine = engine;
         this.cacheEnabled = cacheEnabled;
         this.defaultsEnabled = defaultsEnabled;
+        this.meter = meterRegistry;
         this.cache = Caffeine.newBuilder()
                 .maximumSize(10_000)
                 .expireAfterWrite(Duration.ofSeconds(90))
                 .build();
+        if (this.meter != null) {
+            // register cache metrics
+            CaffeineCacheMetrics.monitor(this.meter, this.cache, "suggest.cache");
+        }
     }
 
     public List<Suggestion> suggest(String q, int limit, Mode mode) {
@@ -47,15 +58,43 @@ public class SuggestService {
         // Guard: avoid empty/very short queries that cause fan-out or errors
         int lim = Math.min(Math.max(limit <= 0 ? 10 : limit, 1), 50);
         if (qq.length() < 2) {
+            if (meter != null) {
+                meter.counter("suggest.short", "engine", engine, "defaults", String.valueOf(defaultsEnabled)).increment();
+            }
             return defaultsEnabled ? defaultPopular(lim) : List.of();
         }
         Mode m = mode == null ? Mode.PREFIX : mode;
+        Timer.Sample sample = meter != null ? Timer.start(meter) : null;
+        List<Suggestion> result;
+        String cacheStatus = "off";
         if (!cacheEnabled) {
-            return dispatch(qq, lim, m);
+            result = dispatch(qq, lim, m);
+        } else {
+            String keyQ = Normalizer.normalize(qq, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);
+            String key = engine + "|" + m + "|" + keyQ + "|" + lim;
+            List<Suggestion> existing = cache.getIfPresent(key);
+            if (existing != null) {
+                result = existing;
+                cacheStatus = "hit";
+            } else {
+                result = dispatch(qq, lim, m);
+                cache.put(key, result);
+                cacheStatus = "miss";
+            }
         }
-        String keyQ = Normalizer.normalize(qq, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);
-        String key = engine + "|" + m + "|" + keyQ + "|" + lim;
-        return cache.get(key, k -> dispatch(qq, lim, m));
+        if (meter != null && sample != null) {
+            sample.stop(Timer.builder("suggest.query")
+                    .tags("engine", engine, "mode", m.name().toLowerCase(), "cache", cacheStatus)
+                    .register(meter));
+            meter.counter("suggest.results", "engine", engine, "mode", m.name().toLowerCase()).increment(result.size());
+        }
+        return result;
+    }
+
+    public List<Suggestion> defaultSuggestions(int limit) {
+        int lim = Math.min(Math.max(limit <= 0 ? 10 : limit, 1), 50);
+        if (!defaultsEnabled) return List.of();
+        return defaultPopular(lim);
     }
 
     private List<Suggestion> dispatch(String q, int limit, Mode mode) {
@@ -65,6 +104,24 @@ public class SuggestService {
             case "sqlite-like" -> suggestSqliteLike(q, limit, mode);
             default -> suggestSqliteLike(q, limit, mode);
         };
+    }
+
+    public int trackSelection(Integer id, String value) {
+        // Update popularity counter by id (preferred) or by case-insensitive value match
+        if (id == null && (value == null || value.isBlank())) {
+            throw new IllegalArgumentException("Provide either 'id' or non-empty 'value'");
+        }
+        if (id != null) {
+            int updated = jdbc.update("UPDATE people SET popularity = popularity + 1 WHERE id = :id",
+                    new MapSqlParameterSource().addValue("id", id));
+            if (updated == 0) throw new IllegalArgumentException("No record with id=" + id);
+            return updated;
+        } else {
+            int updated = jdbc.update("UPDATE people SET popularity = popularity + 1 WHERE name = :name COLLATE NOCASE",
+                    new MapSqlParameterSource().addValue("name", value));
+            if (updated == 0) throw new IllegalArgumentException("No record with value='" + value + "'");
+            return updated;
+        }
     }
 
     // Option A: Simple prefix/contains via LIKE and NOCASE collation (SQLite)

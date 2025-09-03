@@ -13,6 +13,8 @@ It exposes a single HTTP endpoint and a unified service (`SuggestService`) that 
 - Run: `./mvnw spring-boot:run`
 - Try: `GET http://localhost:8080/suggest?q=micr&limit=10&mode=PREFIX`
 
+Docs: OpenAPI at `http://localhost:8080/v3/api-docs`, Swagger UI at `http://localhost:8080/swagger-ui.html`.
+
 SQLite is preconfigured. Schema and sample data load from `src/main/resources/schema.sql`.
 
 ## Configuration
@@ -34,6 +36,14 @@ SQLite is preconfigured. Schema and sample data load from `src/main/resources/sc
     - `limit` (int, default 10, max 50)
     - `mode` = `PREFIX|CONTAINS|FUZZY` (engine-dependent)
 - Response: JSON array of `{ "value": string, "score": number|null }`
+
+- Defaults endpoint (feature-flagged): `GET /suggest/defaults?limit=10`
+  - Enabled with `suggest.defaults.enabled=true`
+  - Returns popular suggestions ordered by `popularity DESC, length(name), name`
+
+- Popularity tracking: `POST /suggest/track`
+  - Body: `{ "id": 123 }` or `{ "value": "Microsoft" }`
+  - Increments `people.popularity` to influence ordering (ties only for LIKE; secondary for FTS)
 
 ## Project Structure
 
@@ -57,6 +67,13 @@ SQLite is preconfigured. Schema and sample data load from `src/main/resources/sc
 - Benchmarks (disabled by default):
   - `./mvnw -Dbench=true -Dbench.records=50000 -Dbench.iters=1000 -Dbench.warm=200 test`
   - Engines covered: LIKE and FTS5; caching disabled in benchmarks for fair DB timings.
+
+## Admin & FTS Maintenance
+
+- Ensure triggers (SQLite FTS external-content): `POST /admin/fts/ensure-triggers`
+- Rebuild FTS index: `POST /admin/fts/rebuild`
+- Optimize FTS index: `POST /admin/fts/optimize`
+- Property: `suggest.fts.manage=true` enables these operations. Triggers keep `people_fts` in sync on INSERT/UPDATE/DELETE.
 
 ## Notes & Safety
 

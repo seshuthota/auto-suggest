@@ -24,3 +24,9 @@ suggest:
 
 server:
   port: 8081
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
