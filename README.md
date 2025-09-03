@@ -60,6 +60,9 @@ SQLite is preconfigured. Schema and sample data load from `src/main/resources/sc
 - Index: `CREATE INDEX idx_people_name_nocase ON people(name COLLATE NOCASE);`
 - FTS5 (optional): `people_fts` (external content); tests rebuild with `INSERT INTO people_fts(people_fts) VALUES('rebuild')`.
 - Oracle Text: create a CONTEXT index with a BASIC_LEXER and WORDLIST (see AGENTS.md for pointers).
+  - DDL provided at `src/main/resources/oracle/oracle-text-ddl.sql`. Run it once to create preferences and index.
+  - Example config: `src/main/resources/application-oracle.yml` (set datasource and `suggest.engine=oracle-text`).
+  - Notes: Enable `SYNC (ON COMMIT)` for freshness. Consider periodic `CTX_DDL.OPTIMIZE_INDEX`.
 
 ## Testing & Benchmarks
 
@@ -67,6 +70,19 @@ SQLite is preconfigured. Schema and sample data load from `src/main/resources/sc
 - Benchmarks (disabled by default):
   - `./mvnw -Dbench=true -Dbench.records=50000 -Dbench.iters=1000 -Dbench.warm=200 test`
   - Engines covered: LIKE and FTS5; caching disabled in benchmarks for fair DB timings.
+
+## Docker
+
+- Build locally: `docker build -t autosuggest:local .`
+- Run: `docker run --rm -p 8081:8081 autosuggest:local`
+- Health: `GET http://localhost:8081/actuator/health` → `{ "status": "UP" }`
+- Environment:
+  - `JAVA_OPTS` (e.g., `-Xms256m -Xmx512m`)
+  - `PORT` (default `8081` — matches `application.yml`)
+
+CI builds push images to GitHub Container Registry when pushing to `main`:
+- `ghcr.io/<owner>/<repo>:latest`
+- `ghcr.io/<owner>/<repo>:<commit-sha>`
 
 ## Admin & FTS Maintenance
 
@@ -82,3 +98,14 @@ SQLite is preconfigured. Schema and sample data load from `src/main/resources/sc
 - Never commit credentials; for Oracle use environment variables/secret stores.
 
 See `AGENTS.md` for contributor guidelines.
+
+## Rate Limiting
+
+Basic per-client rate limiting on `GET /suggest` is available using Bucket4j (disabled by default).
+
+- Enable: set in `application.yml` under `suggest.ratelimit.*`
+  - `enabled: true`
+  - `capacity: 50` (bucket size)
+  - `refillTokens: 50` and `refillPeriod: PT1S` (ISO-8601 duration)
+- Keying: prefers `X-Client-Id` header; falls back to `X-Forwarded-For` or remote IP.
+- On limit exceed: HTTP 429 with a small JSON error and `X-Rate-Limit-Remaining` header.

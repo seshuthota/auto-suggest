@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@//host:port/service
+    username: your_user
+    password: your_password
+    driver-class-name: oracle.jdbc.OracleDriver
+  jdbc:
+    template:
+      query-timeout: 2
+
+suggest:
+  engine: oracle-text
+  cache:
+    enabled: true
+  defaults:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+

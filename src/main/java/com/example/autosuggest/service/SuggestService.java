@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -53,6 +54,7 @@ public class SuggestService {
         }
     }
 
+    @CircuitBreaker(name = "suggest-db", fallbackMethod = "suggestFallback")
     public List<Suggestion> suggest(String q, int limit, Mode mode) {
         String qq = q == null ? "" : q.trim();
         // Guard: avoid empty/very short queries that cause fan-out or errors
@@ -89,6 +91,15 @@ public class SuggestService {
             meter.counter("suggest.results", "engine", engine, "mode", m.name().toLowerCase()).increment(result.size());
         }
         return result;
+    }
+
+    // Fallback used by CircuitBreaker: return empty list on DB failures
+    @SuppressWarnings("unused")
+    public List<Suggestion> suggestFallback(String q, int limit, Mode mode, Throwable t) {
+        if (meter != null) {
+            meter.counter("suggest.fallback", "engine", engine).increment();
+        }
+        return List.of();
     }
 
     public List<Suggestion> defaultSuggestions(int limit) {
@@ -183,13 +194,7 @@ public class SuggestService {
 
     // Oracle Text-backed suggestions (CONTAINS) with scoring
     private List<Suggestion> suggestOracleText(String q, int limit, Mode mode) {
-        String expr;
-        switch (mode) {
-            case PREFIX -> expr = escapeOracleText(q) + "%";
-            case CONTAINS -> expr = "%" + escapeOracleText(q) + "%";
-            case FUZZY -> expr = "fuzzy(" + escapeOracleText(q) + ",70,200,weight)";
-            default -> expr = q + "%";
-        }
+        String expr = buildOracleTextExpr(q, mode);
         String sql = """
                 SELECT NAME AS value, SCORE(1) AS score
                 FROM PEOPLE
@@ -244,9 +249,42 @@ public class SuggestService {
         return match;
     }
 
-    private static String escapeOracleText(String s) {
-        if (s == null || s.isBlank()) return "\"\"";
-        String safe = s.replace("\"", "\"\"");
-        return "\"" + safe + "\"";
+    private static String sanitizeOracleText(String s) {
+        if (s == null) return "";
+        // Remove special query operators; we'll add wildcards explicitly.
+        return s.replaceAll("[\\\"'{}\\[\\]\\()|&!~*?:;,.<>+=%-]", " ")
+                .replaceAll("\\s+", " ").trim();
+    }
+
+    private static String buildOracleTextExpr(String q, Mode mode) {
+        String cleaned = sanitizeOracleText(q);
+        if (cleaned.isBlank()) return "%"; // match nothing useful; upstream guard prevents this for main path
+        String[] terms = cleaned.split("\\s+");
+        List<String> parts = new ArrayList<>();
+        switch (mode) {
+            case PREFIX -> {
+                for (int i = 0; i < terms.length; i++) {
+                    String t = terms[i];
+                    boolean last = (i == terms.length - 1);
+                    parts.add(last ? t + "%" : t);
+                }
+                return String.join(" AND ", parts);
+            }
+            case CONTAINS -> {
+                for (String t : terms) {
+                    parts.add("%" + t + "%");
+                }
+                return String.join(" AND ", parts);
+            }
+            case FUZZY -> {
+                for (String t : terms) {
+                    parts.add("fuzzy(" + t + ",70,200,weight)");
+                }
+                return String.join(" AND ", parts);
+            }
+            default -> {
+                return cleaned + "%";
+            }
+        }
     }
 }
