@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    url: jdbc:sqlite:file:memdb1?mode=memory&cache=shared
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+  jdbc:
+    template:
+      query-timeout: 2
+
+suggest:
+  engine: sqlite-like
+  cache:
+    enabled: false
+  defaults:
+    enabled: false
+
+logging:
+  level:
+    root: WARN

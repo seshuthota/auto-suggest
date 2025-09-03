@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      run-benchmarks:
+        description: "Run benchmark tests"
+        required: false
+        default: "false"
+      bench-records:
+        description: "Benchmark record count"
+        required: false
+        default: "50000"
+      bench-iters:
+        description: "Benchmark iterations"
+        required: false
+        default: "1000"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Make mvnw executable
+        run: chmod +x mvnw
+
+      - name: Build and test (no benchmarks)
+        run: ./mvnw -B -DskipTests=false test
+
+  benchmarks:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['run-benchmarks'] == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Make mvnw executable
+        run: chmod +x mvnw
+
+      - name: Run benchmarks
+        run: |
+          ./mvnw -B -Dbench=true \
+            -Dbench.records=${{ github.event.inputs['bench-records'] }} \
+            -Dbench.iters=${{ github.event.inputs['bench-iters'] }} test

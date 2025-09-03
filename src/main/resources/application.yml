@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: autosuggest
+  datasource:
+    url: jdbc:sqlite:app.db
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+  jdbc:
+    template:
+      query-timeout: 2 # seconds
+
+# Choose which backend to use for suggestions:
+# - sqlite-like  : simple LIKE prefix/contains with NOCASE
+# - sqlite-fts   : FTS5-backed prefix with ranking
+# - oracle-text  : Oracle Text CONTAINS (requires Oracle DB and index)
+suggest:
+  engine: sqlite-like
+  cache:
+    enabled: true
+  defaults:
+    enabled: false
+
+server:
+  port: 8081
