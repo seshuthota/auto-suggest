@@ -21,6 +21,33 @@ suggest:
     enabled: true
   defaults:
     enabled: false
+  ratelimit:
+    enabled: false
+    capacity: 50
+    refillTokens: 50
+    refillPeriod: PT1S
 
 server:
   port: 8081
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowType: TIME_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        slowCallDurationThreshold: 250ms
+        slowCallRateThreshold: 50
+        permittedNumberOfCallsInHalfOpenState: 3
+        waitDurationInOpenState: 5s
+    instances:
+      suggest-db:
+        baseConfig: default
