@@ -1,5 +1,8 @@
 # Autosuggest API (Spring Boot)
 
+[![CI](https://github.com/seshuthota/auto-suggest/actions/workflows/ci.yml/badge.svg)](https://github.com/seshuthota/auto-suggest/actions/workflows/ci.yml)
+[![GHCR](https://img.shields.io/badge/ghcr.io-auto--suggest-blue?logo=github)](https://github.com/users/seshuthota/packages/container/package/auto-suggest)
+
 A fast, pragmatic type-ahead/autosuggest service with pluggable search engines:
 - SQLite LIKE (prefix and simple contains)
 - SQLite FTS5 (tokenized prefix with ranking via BM25)
@@ -16,6 +19,7 @@ It exposes a single HTTP endpoint and a unified service (`SuggestService`) that 
 Docs: OpenAPI at `http://localhost:8080/v3/api-docs`, Swagger UI at `http://localhost:8080/swagger-ui.html`.
 
 SQLite is preconfigured. Schema and sample data load from `src/main/resources/schema.sql`.
+Tip: If running in Docker, expose port 8081 (default in `application.yml`): `docker run -p 8081:8081 ghcr.io/seshuthota/auto-suggest:latest`.
 
 ## Configuration
 
@@ -27,7 +31,7 @@ SQLite is preconfigured. Schema and sample data load from `src/main/resources/sc
   - SQLite (default): `spring.datasource.url=jdbc:sqlite:app.db`
   - In‑memory tests: `jdbc:sqlite:file:memdb1?mode=memory&cache=shared`
   - Oracle: set `spring.datasource.url`, `username`, `password` and provide Oracle Text index on `PEOPLE(NAME)`
-
+    
 ## API
 
 - Endpoint: `GET /suggest`
@@ -74,7 +78,8 @@ SQLite is preconfigured. Schema and sample data load from `src/main/resources/sc
 ## Docker
 
 - Build locally: `docker build -t autosuggest:local .`
-- Run: `docker run --rm -p 8081:8081 autosuggest:local`
+- Run local image: `docker run --rm -p 8081:8081 autosuggest:local`
+- Run GHCR image: `docker run --rm -p 8081:8081 ghcr.io/seshuthota/auto-suggest:latest`
 - Health: `GET http://localhost:8081/actuator/health` → `{ "status": "UP" }`
 - Environment:
   - `JAVA_OPTS` (e.g., `-Xms256m -Xmx512m`)
